@@ -1,0 +1,148 @@
+---
+insttitle: "Project Deliverable 1"
+author: "Rees Klintworth"
+date: "September 22, 2014"
+output: word_document
+---
+
+```{r}
+# Functions that will be used by the rest of my code
+analyze_timeseries <- function(ts, symbol)
+  {
+    h_value = round(length(ts)/10)
+    
+    # Holt-Winters with both parameters true
+    beta_gamma_forecasts <- HoltWinters(ts)
+    beta_gamma_forecasts2 <- forecast.HoltWinters(beta_gamma_forecasts, h=h_value)
+    beta_gamma_box <- Box.test(beta_gamma_forecasts2$residuals, lag=h_value, type="Ljung-Box")
+  
+    # Holt-Winters with both parameters false
+    neither_forecasts <- HoltWinters(ts, beta=FALSE, gamma=FALSE)
+    neither_forecasts2 <- forecast.HoltWinters(neither_forecasts, h=h_value)
+    neither_box <- Box.test(neither_forecasts2$residuals, lag=h_value, type="Ljung-Box")
+  
+    # Holt-Winters with gamma false
+    beta_forecasts <- HoltWinters(ts, gamma=FALSE)
+    beta_forecasts2 <- forecast.HoltWinters(beta_forecasts, h=h_value)   
+    beta_box <- Box.test(beta_forecasts2$residuals, lag=h_value, type="Ljung-Box")
+    
+    # Checks for all forecasts where the p value is greater than the threshold (0.1)
+    forecasts <- c(beta_gamma_forecasts2, neither_forecasts2, beta_forecasts2)
+    p_values <- c(beta_gamma_box$p.value, neither_box$p.value, beta_box$p.value)
+    matching_models <- p_values >= 0.1
+    
+    matched = FALSE
+    
+   if (matching_models[1])
+     {
+      plot.forecast(beta_gamma_forecasts2, main="")
+      title(paste0(symbol, " Holt-Winters: Beta, Gamma"))
+      cat("Holt-Winters with Beta and Gamma fit well with a p-value of", p_values[1], "\n")
+      matched = TRUE
+     }
+   
+   if (matching_models[2])
+     {
+      plot.forecast(neither_forecasts2, main="")
+      title(paste0(symbol, " Holt-Winters"))
+      cat("Holt-Winters without Beta or Gamma fit well with a p-value of", p_values[2], "\n")
+      matched = TRUE
+     }
+   
+   if (matching_models[3])
+     {
+      plot.forecast(beta_forecasts2, main="")
+      title(paste0(symbol, " Holt-Winters: Beta"))
+      cat("Holt-Winters with Beta fit well with a p-value of", p_values[3], "\n")
+      matched = TRUE
+     }
+   
+   if (!matched)
+     {
+      cat("No model fit the data well", "\n")
+     }
+  }
+
+# This function calculates two moving averages based on inputed day values.
+# Data must have an "Adjusted Close" column
+calculate_moving_averages <- function(data, days1, days2, symbol)
+  {
+    # Find the first moving average
+    data_sma1 <- SMA(data$`Adjusted Close`, n = days1)
+    # Find the second moving average
+    data_sma2 <- SMA(data$`Adjusted Close`, n = days2)
+    # Approximate Frequency by finding average number of entries per year
+    number_per_year <- round(nrow(data)/13)
+    # Create a data frame from the three columns of data
+    data_frame <- data.frame(data$`Adjusted Close`, data_sma1, data_sma2)
+    # Create a time series from the data frame
+    time_series <- ts(data_frame, freq=number_per_year, start=c(2001,1))
+    colors <- c("Black", "Red", "Blue")
+    # Output the timeseries
+    ts.plot(time_series, col=colors, xlab="Year", ylab="Price (American Dollars)")
+    title(paste0(symbol, " Adjusted Close and Moving Averages"))
+    sma1_text <- paste0(days1, " Days")
+    sma2_text <- paste0(days2, " Days")
+    legend(x=2002, y=max(data$`Adjusted Close`), legend=c("Orignal", sma1_text, sma2_text), lwd=1, col = colors)
+  }
+```
+
+1. For the first part of this assignment, I have read in VFINX and TNX data from Yahoo! via Quandl. Below, I will display the structure (str function) and first 10 items (head function) of each dataset.
+```{r, comment=NA}
+# Load necessary packages
+suppressMessages(library(Quandl))
+suppressMessages(library(TTR))
+suppressMessages(library(forecast))
+Quandl.auth("Xwpyys22sxHPzyXBrGdH")
+
+# US stock market values from 1980
+vfinx <- Quandl("YAHOO/FUND_VFINX")
+cat("VFINX data:", "\n")
+head(vfinx)
+str(vfinx)
+# Risk-free rate of return
+tnx <- Quandl("YAHOO/INDEX_TNX")
+cat("TNX data:", "\n")
+head(tnx)
+str(vfinx)
+
+```
+2. At this stage in the project, data cleaning was minimal because it wasn't necessary. I took necessary steps throughout coding to prevent errors, and will be able to easily add more functionality later.
+
+3. I picked ten different stocks (with no rhyme or reason) to analyze. The companies represented are: Apple, Adobe, Best Buy, Deere & Company, eBay, Garmin, Coca-Cola, Pepsi, Under Armour, and Union Pacific.
+
+I gathered data for each stock from January 1, 2001 to December 31, 2013. This can be changed easily in the future for more responsive data analysis. I also attempted to fit each stock to a Holt-Winters model, experimenting with different values of Beta and Gamma. If any model fit with a p-value greater than or equal to .1, I displayed the output. Note that, because of my large time range, there were very few good fits. The code is established however, and would yield more printed results for a narrower time period.
+
+4. I used the diff function and simple mathematics to calculate the rate of return for each stock.
+
+5. I plotted the Adjusted Closing prices for each stock, along with two moving averages (one large and one small).
+
+The output from parts 3 - 5 can be seen below for each stock.
+
+```{r, comment=NA}
+# These are the 10 stocks I selected to analyze
+my_stocks <- c("AAPL", "ADBE", "BBY", "DE", "EBAY", "GRMN", "KO", "PEP", "UA", "UNP")
+
+# Loop through stock symbols
+invisible(sapply(my_stocks, function(symbol)
+  {
+    cat("Analyzing", symbol, "\n")
+    # Create Quandl code
+    quandl_code = paste0("YAHOO/", symbol)
+    # All of the stocks go back to at least the beginning of 2001, and wanted analyze the most years possible
+    my_data <- Quandl(quandl_code, start_date="2001-01-01", end_date="2013-12-31")
+    # Reverse the data so it isn't backwards
+    my_data <- my_data[nrow(my_data):1,]
+    # Determine frequency
+    number_per_year <- round(nrow(my_data)/13)
+    # Create timeseries
+    my_ts <- ts(my_data[,'Adjusted Close'], freq=number_per_year, start=c(2001,1))
+    analyze_timeseries(my_ts, symbol)
+    # Find the return rates, and multiply by number per year for an annualized value
+    return_rates <- diff(my_data$`Adjusted Close`)
+    annualized_return_rate <- mean(return_rates) * number_per_year
+    hist(return_rates)
+    cat("Annual return rate:", annualized_return_rate, "\n") 
+    calculate_moving_averages(my_data, 50, 200, symbol)
+  }))
+```
