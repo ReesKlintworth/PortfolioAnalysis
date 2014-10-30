@@ -1,0 +1,37 @@
+---
+title: "Project Deliverable 2"
+author: "Rees Klintworth"
+date: "October 30, 2014"
+output: word_document
+---
+
+```{r, comment=NA}
+# Load necessary packages
+suppressMessages(library(Quandl))
+Quandl.auth("Xwpyys22sxHPzyXBrGdH")
+
+# US stock market values from 1980
+vfinx <- Quandl("YAHOO/FUND_VFINX")
+# Reverse the data to get it in a good form to calculate ERP
+vfinx <- vfinx[rev(rownames(vfinx)),]
+# Risk-free rate of return
+tnx <- Quandl("YAHOO/INDEX_TNX")
+# Limit data to 2000 through 2013 for ERP calculations
+vfinx <- vfinx[vfinx$Date > as.Date("1999-12-31"),]
+vfinx <- vfinx[vfinx$Date < as.Date("2014-01-01"),]
+tnx <- tnx[tnx$Date > as.Date("1999-12-31"),]
+tnx <- tnx[tnx$Date < as.Date("2014-01-01"),]
+# Calculate the rates of return for vfinx
+vfinx_rates <- vfinx_rates <- diff(vfinx$'Adjusted Close')/vfinx$'Adjusted Close'[-length(vfinx$'Adjusted Close')]
+# Find the Average rate for each, and then annualize it
+vfinx_rate <- mean(vfinx_rates)
+vfinx_rate <- (1 + vfinx_rate)^(length(vfinx_rates)/14) - 1
+# TNX data is already annualized, just need to convert it to a rate and find the average
+tnx_rate <- mean(tnx$'Adjusted Close'/100)
+erp <- vfinx_rate - tnx_rate
+```
+A. The calculated ERP for 2000 - 2013 (inclusive) is:
+```{r}
+print(erp)
+```
+
