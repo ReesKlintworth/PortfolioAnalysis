@@ -33,7 +33,7 @@ tnx_rate <- mean(tnx$'Adjusted Close'/100)
 erp <- gspc_rate - tnx_rate
 cat("The calculated ERP is:", sprintf("%1.2f%%", 100*erp))
 ```
-7. Beta
+7/8. Beta + Expected Annualized Rate of Return for each stock
 ```{r}
 ## Part 7 - BETA
 # Three stocks I've selected for this part
@@ -55,9 +55,8 @@ invisible(sapply(my_stocks, function(symbol)
     res=lm(stock_rates~gspc_beta_rates)
     # Beta is sthe slope of the Linear model
     beta = res$coefficients[[2]]
-    cat("Beta:", beta, "\n") 
+    cat("Beta:", beta, "\n")
+    expected_return = tnx_rate + beta*erp
+    cat("Expected Annualized Rate of Return:",sprintf("%1.2f%%", 100*expected_return), "\n")
   }))
-
-
-
 ```
