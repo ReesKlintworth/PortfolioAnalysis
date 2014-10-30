@@ -4,34 +4,60 @@ author: "Rees Klintworth"
 date: "October 30, 2014"
 output: word_document
 ---
-
+6. ERP
 ```{r, comment=NA}
 # Load necessary packages
 suppressMessages(library(Quandl))
+suppressMessages(library(lubridate))
 Quandl.auth("Xwpyys22sxHPzyXBrGdH")
-
-# US stock market values from 1980
-vfinx <- Quandl("YAHOO/FUND_VFINX")
-# Reverse the data to get it in a good form to calculate ERP
-vfinx <- vfinx[rev(rownames(vfinx)),]
-# Risk-free rate of return
-tnx <- Quandl("YAHOO/INDEX_TNX")
-# Limit data to 2000 through 2013 for ERP calculations
-vfinx <- vfinx[vfinx$Date > as.Date("1999-12-31"),]
-vfinx <- vfinx[vfinx$Date < as.Date("2014-01-01"),]
-tnx <- tnx[tnx$Date > as.Date("1999-12-31"),]
-tnx <- tnx[tnx$Date < as.Date("2014-01-01"),]
-# Calculate the rates of return for vfinx
-vfinx_rates <- vfinx_rates <- diff(vfinx$'Adjusted Close')/vfinx$'Adjusted Close'[-length(vfinx$'Adjusted Close')]
+## Part 6 - ERP
+# Date variables to make modification easier when moved to Shiny
+years_erp <- 10
+start_date_erp <- as.Date(ymd(Sys.Date()) - years(years_erp))
+start_date_beta <- as.Date(ymd(Sys.Date()) - years(3))
+end_date <- Sys.Date()
+# US stock market (S&P 500) values
+gspc_erp <- Quandl("YAHOO/INDEX_GSPC", start_date=start_date_erp, end_date=end_date)
+# Risk-free rate of return values
+tnx <- Quandl("YAHOO/INDEX_TNX", start_date=start_date_erp, end_date=end_date)
+# Reverse the data to get the normal form
+gspc_erp <- gspc_erp[nrow(gspc_erp):1,]
+tnx <- tnx[nrow(tnx):1,]
+# Calculate the rates of return for gspc
+gspc_rates <- diff(gspc_erp$'Adjusted Close')/gspc_erp$'Adjusted Close'[-length(gspc_erp$'Adjusted Close')]
 # Find the Average rate for each, and then annualize it
-vfinx_rate <- mean(vfinx_rates)
-vfinx_rate <- (1 + vfinx_rate)^(length(vfinx_rates)/14) - 1
-# TNX data is already annualized, just need to convert it to a rate and find the average
+gspc_rate <- mean(gspc_rates)
+gspc_rate <- (1 + gspc_rate)^(length(gspc_rates)/years_erp) - 1
+# TNX data is already annualized, just need to find the average
 tnx_rate <- mean(tnx$'Adjusted Close'/100)
-erp <- vfinx_rate - tnx_rate
+erp <- gspc_rate - tnx_rate
+cat("The calculated ERP is:", sprintf("%1.2f%%", 100*erp))
 ```
-A. The calculated ERP for 2000 - 2013 (inclusive) is:
+7. Beta
 ```{r}
-print(erp)
-```
+## Part 7 - BETA
+# Three stocks I've selected for this part
+my_stocks <- c("AAPL", "BBY", "PEP")
+gspc_beta <- Quandl("YAHOO/INDEX_GSPC", start_date=start_date_beta, end_date=end_date)
+gspc_beta <- gspc_beta[nrow(gspc_beta):1,]
+invisible(sapply(my_stocks, function(symbol)
+  {
+    cat("Analyzing", symbol, "\n")
+    quandl_code = paste0("YAHOO/", symbol)
+    # All of the stocks go back to at least the beginning of 2001, and wanted analyze the most years possible
+    stock <- Quandl(quandl_code, start_date=start_date_beta, end_date=end_date)
+    # Reverse the data so it isn't backwards
+    stock <- stock[nrow(stock):1,]
+    # Calculate the rates of return for vfinx
+    stock_rates <- diff(stock$'Adjusted Close')/stock$'Adjusted Close'[-length(stock$'Adjusted Close')]
+    gspc_beta_rates <- diff(gspc_beta$'Adjusted Close')/gspc_beta$'Adjusted Close'[-length(gspc_beta$'Adjusted Close')]
+    # Create a linear model to find the line of best fit
+    res=lm(stock_rates~gspc_beta_rates)
+    # Beta is sthe slope of the Linear model
+    beta = res$coefficients[[2]]
+    cat("Beta:", beta, "\n") 
+  }))
 
+
+
+```
