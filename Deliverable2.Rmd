@@ -4,11 +4,16 @@ author: "Rees Klintworth"
 date: "October 30, 2014"
 output: word_document
 ---
+All components of the Class Project, Deliverable 2, are present in this document. Little emphasis
+was placed on formatting, since this will all be changed once the project is converted to Shiny.
+
 6. ERP
 ```{r, comment=NA}
 # Load necessary packages
 suppressMessages(library(Quandl))
 suppressMessages(library(lubridate))
+suppressMessages(library(lattice))
+suppressMessages(library(reshape2))
 Quandl.auth("Xwpyys22sxHPzyXBrGdH")
 ## Part 6 - ERP
 # Date variables to make modification easier when moved to Shiny
@@ -35,33 +40,60 @@ cat("The calculated ERP is:", sprintf("%1.2f%%", 100*erp))
 ```
 7/8. Beta + Expected Annualized Rate of Return for each stock
 ```{r}
-## Part 7 - BETA
+## Part 7/8 - BETA and Expected Rate of Return
 # Three stocks I've selected for this part
-my_stocks <- c("AAPL", "BBY", "PEP")
+my_stocks <- c("BA", "CAG", "SCHW")
 gspc_beta <- Quandl("YAHOO/INDEX_GSPC", start_date=start_date_beta, end_date=end_date)
 gspc_beta <- gspc_beta[nrow(gspc_beta):1,]
+# Returns a matrix of the rates of returns for all of the stocks
 stock_rates <- sapply(my_stocks, function(symbol)
   {
     cat("Analyzing", symbol, "\n")
     quandl_code = paste0("YAHOO/", symbol)
-    # All of the stocks go back to at least the beginning of 2001, and wanted analyze the most years possible
     stock <- Quandl(quandl_code, start_date=start_date_beta, end_date=end_date)
     # Reverse the data so it isn't backwards
     stock <- stock[nrow(stock):1,]
-    # Calculate the rates of return for vfinx
+    # Calculate the rates of return for the symbol
     stock_rates <- diff(stock$'Adjusted Close')/stock$'Adjusted Close'[-length(stock$'Adjusted Close')]
+    # Calculate the rates of return for the S&P 500
     gspc_beta_rates <- diff(gspc_beta$'Adjusted Close')/gspc_beta$'Adjusted Close'[-length(gspc_beta$'Adjusted Close')]
     # Create a linear model to find the line of best fit
     res=lm(stock_rates~gspc_beta_rates)
-    # Beta is sthe slope of the Linear model
+    # Beta is the slope of the Linear model
     beta = res$coefficients[[2]]
     cat("Beta:", beta, "\n")
+    # Find the expected return using the formula from the CAPM model
     expected_return = tnx_rate + beta*erp
     cat("Expected Annualized Rate of Return:",sprintf("%1.2f%%", 100*expected_return), "\n")
     stock_rates
   })
 
+# Add column names to the matrix
 colnames(stock_rates) = my_stocks
-cov(stock_rates)
+```
+9/10: Covariance and Correlation
+```{r, comment=NA}
+## Part 9/10 - Covariance and Correlation
+cov_matrix <- cov(stock_rates)
+cor_matrix <- cor(stock_rates)
+cat("Covariance Matrix:")
+print(cov_matrix)
+cat("Correlation Matrix")
+print(cor_matrix)
 
+# Need to adjust the data format to be able to plot it
+print_cor <- melt(cor_matrix)
+
+# Plot the correlation on a barchart using lattice
+barchart(value ~ Var1 | Var2, data = print_cor, layout=c(3,1))
+```
+11: Input weights
+```{r, comment=NA}
+## Part 11 - Input Weights
+# Naively weight stocks now, but users will be able to select weights in shiny app
+percent_per_stock <- 100/length(my_stocks)
+invisible(sapply(my_stocks, function(symbol)
+  {
+    cat(symbol,sprintf("%1.2f%%", percent_per_stock), "\n")
+  }))
 ```
