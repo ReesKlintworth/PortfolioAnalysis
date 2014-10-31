@@ -40,7 +40,7 @@ cat("The calculated ERP is:", sprintf("%1.2f%%", 100*erp))
 my_stocks <- c("AAPL", "BBY", "PEP")
 gspc_beta <- Quandl("YAHOO/INDEX_GSPC", start_date=start_date_beta, end_date=end_date)
 gspc_beta <- gspc_beta[nrow(gspc_beta):1,]
-invisible(sapply(my_stocks, function(symbol)
+stock_rates <- sapply(my_stocks, function(symbol)
   {
     cat("Analyzing", symbol, "\n")
     quandl_code = paste0("YAHOO/", symbol)
@@ -58,5 +58,10 @@ invisible(sapply(my_stocks, function(symbol)
     cat("Beta:", beta, "\n")
     expected_return = tnx_rate + beta*erp
     cat("Expected Annualized Rate of Return:",sprintf("%1.2f%%", 100*expected_return), "\n")
-  }))
+    stock_rates
+  })
+
+colnames(stock_rates) = my_stocks
+cov(stock_rates)
+
 ```
