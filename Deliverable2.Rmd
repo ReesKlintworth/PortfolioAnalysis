@@ -42,7 +42,7 @@ cat("The calculated ERP is:", sprintf("%1.2f%%", 100*erp))
 ```{r}
 ## Part 7/8 - BETA and Expected Rate of Return
 # Three stocks I've selected for this part
-my_stocks <- c("BA", "CAG", "SCHW")
+my_stocks <- c("AAPL", "BBY", "PEP")
 gspc_beta <- Quandl("YAHOO/INDEX_GSPC", start_date=start_date_beta, end_date=end_date)
 gspc_beta <- gspc_beta[nrow(gspc_beta):1,]
 # Returns a matrix of the rates of returns for all of the stocks
