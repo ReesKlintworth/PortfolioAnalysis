@@ -1,0 +1,179 @@
+---
+title: "Project Deliverable 3"
+author: "Rees Klintworth"
+date: "November 12, 2014"
+output: word_document
+---
+All components of the Class Project, Deliverable 3, are present in this document. Little emphasis
+was placed on formatting, since this will all be changed once the project is converted to Shiny.
+```{r, comment=NA}
+# Library and other startup statements
+suppressMessages(library(Quandl))
+suppressMessages(library(lubridate))
+suppressMessages(library(quadprog))
+suppressMessages(library(ggplot2))
+Quandl.auth("Xwpyys22sxHPzyXBrGdH")
+
+## Functions used elsewhere
+# Weights a single expected return
+calculate_weighted_return <- function(expected_return,weight)
+{
+  expected_return * weight
+}
+
+# Weights a full series of returns
+calculate_weighted_returns <- function(returns,weights)
+{
+  # Multiply weight by each element in column
+  weights * returns
+}
+
+# Returns weights for each stock. Naive implementation since there is no user input
+get_weights <- function(stocks)
+{
+  # In shiny implementation, weights will be entered by user
+  percent_per_stock <- 1/length(my_stocks)
+  sapply(my_stocks, function(column)
+  {
+    percent_per_stock
+  })
+}
+
+# Find the expected return for a portofilio based on individual expected_returns and corresponding weights
+calculate_expected_return <- function(expected_returns, weights)
+{
+  sum(mapply(calculate_weighted_return, expected_returns,weights))
+}
+
+# Find the standard deviation for a weighted collection of return rates for each item in a portfolio
+calculate_standard_deviation <- function(weighted_rates)
+{
+  # Sum each row for single return rates per period
+  single_rates <- rowSums(weighted_rates)
+  #Calculate the standard deviation
+  sd(single_rates) 
+}
+
+# When called from below, creates a matrix of all possible combinations of weights for step size of .01
+calculate_weights_matrix <- function(point)
+{
+  weights2 <- seq(0,1-point,.01)
+  weights3 <- 1-point-weights2
+  data.frame(rep(point,length(weights2)), weights2, weights3)
+}
+
+# Returns the expected return and standard deviation for the specefied portfolio element weights
+calculate_plot_point <- function(weights)
+{
+  expected_return <- calculate_expected_return(expected_returns, weights)
+  
+  # Create dataframe of stock rates adjusted by weights
+  weighted_stock_rates <- as.data.frame(mapply(calculate_weighted_returns, stock_rates, weights))
+  # Calculate the standard deviation
+  standard_deviation <- calculate_standard_deviation(weighted_stock_rates)
+  c(expected_return, standard_deviation)
+}
+
+# Code from previous deliverable to get stock data for selected portfolio
+years_erp <- 10
+start_date_erp <- as.Date(ymd(Sys.Date()) - years(years_erp))
+start_date_beta <- as.Date(ymd(Sys.Date()) - years(3))
+end_date <- Sys.Date()
+# US stock market (S&P 500) values
+gspc_erp <- Quandl("YAHOO/INDEX_GSPC", start_date=start_date_erp, end_date=end_date)
+# Risk-free rate of return values
+tnx <- Quandl("YAHOO/INDEX_TNX", start_date=start_date_erp, end_date=end_date)
+# Reverse the data to get the normal form
+gspc_erp <- gspc_erp[nrow(gspc_erp):1,]
+tnx <- tnx[nrow(tnx):1,]
+# Calculate the rates of return for gspc
+gspc_rates <- diff(gspc_erp$'Adjusted Close')/gspc_erp$'Adjusted Close'[-length(gspc_erp$'Adjusted Close')]
+# Find the Average rate for each, and then annualize it
+gspc_rate <- mean(gspc_rates)
+gspc_rate <- (1 + gspc_rate)^(length(gspc_rates)/years_erp) - 1
+# TNX data is already annualized, just need to find the average
+tnx_rate <- mean(tnx$'Adjusted Close'/100)
+# Calculate the equity risk premium
+erp <- gspc_rate - tnx_rate
+
+gspc_beta <- Quandl("YAHOO/INDEX_GSPC", start_date=start_date_beta, end_date=end_date)
+gspc_beta <- gspc_beta[nrow(gspc_beta):1,]
+# Calculate the rates of return for the S&P 500
+gspc_beta_rates <- diff(gspc_beta$'Adjusted Close')/gspc_beta$'Adjusted Close'[-length(gspc_beta$'Adjusted Close')]
+```
+**12. Annualized Mean Rate of Return and Standard Deviation for Portfolio**
+```{r, comment=NA, results='hold'}
+my_stocks <- c("AAPL", "BBY", "PEP")
+stock_rates <- as.data.frame(sapply(my_stocks, function(symbol)
+{
+  quandl_code <- paste0("YAHOO/", symbol)
+  stock <- Quandl(quandl_code, start_date=start_date_beta, end_date=end_date)
+  # Reverse the data so it isn't backwards
+  stock <- stock[nrow(stock):1,]
+  # Calculate the rates of return for the symbol
+  stock_rates <- diff(stock$'Adjusted Close')/stock$'Adjusted Close'[-length(stock$'Adjusted Close')]
+}))
+
+colnames(stock_rates) <- my_stocks
+
+# Calculate the expected return for each stock
+expected_returns <-  lapply(my_stocks, function(stock)
+{
+  # Create a linear model to find the line of best fit
+  res <- lm(stock_rates[,stock]~gspc_beta_rates)
+  # Beta is the slope of the Linear model
+  beta <- res$coefficients[[2]]
+  # Find the expected return using the formula from the CAPM model
+  expected_return <- tnx_rate + beta*erp
+})
+
+weights <- get_weights(my_stocks)
+
+# Calculate the combined expected return
+expected_return <- calculate_expected_return(expected_returns,weights)
+
+# Create dataframe of stock rates adjusted by weights
+weighted_stock_rates <- as.data.frame(mapply(calculate_weighted_returns, stock_rates, weights))
+
+#Calculate the standard deviation
+standard_deviation <- calculate_standard_deviation(weighted_stock_rates)
+
+cat("The expected return for the portfolio is", sprintf("%1.2f%%", 100*expected_return), "\n")
+cat("The standard deviation for the portfolio is", sprintf("%1.3f", standard_deviation), "\n")
+```
+**13. Portfolio Optimization**
+```{r, comment=NA, results='hold'}
+# Variables needed to solve for weights
+cov_matrix <- cov(stock_rates)
+risk <- rep(0,3)
+amat <- matrix(c(rep(1, nrow(cov_matrix)), unlist(expected_returns)), nrow=nrow(cov_matrix))
+# Picking desired return rate of .075, or 7.5% to demonstrate functionality
+bvec <- c(1, .075)
+meq <- 2
+
+# From quadprog package. Calculates the weights needed to reach a specified mean rate of return while minimizing standard deviation
+calculated_weights <- solve.QP(cov_matrix, risk, amat, bvec, meq, factorized=FALSE)$solution
+names(calculated_weights) <- my_stocks
+# Calculates the mean rate of return and the standard deviation for the weighted combination
+output <- calculate_plot_point(calculated_weights)
+
+cat("For a return rate of ", sprintf("%1.2f%%", 100*output[1]), " the standard deviation can be minimized to ", sprintf("%1.3f", output[2]), " with the following weights:", "\n", sep="")
+invisible(sapply(my_stocks, function(symbol)
+{
+  cat(symbol,": ", sprintf("%1.2f%%", 100*calculated_weights[symbol]), "\n", sep="")
+}))
+```
+**14. Plot**
+```{r, comment=NA, results='hold'}
+# Create a sequence of numbers from 0 to 1 with step-size = .01
+weights1 <- seq(0,1,.01)
+# Builds a data frame that contains all combinations of three weights for step size = .01
+plot_weights <- do.call("rbind", lapply(weights1, calculate_weights_matrix))
+
+# For each weight combination, calculate the mean return rate and standard deviation to plot
+points <- as.data.frame(t(apply(plot_weights,1,calculate_plot_point)))
+
+# Plot the points, putting standard deviation on the x-axis and mean rate of return on the y-axis
+qplot(points, x=points[,2], y=points[,1], xlab="Standard Deviation", ylab="Mean Rate of Return", main="Portfolio Combinations Plot")
+
+```
