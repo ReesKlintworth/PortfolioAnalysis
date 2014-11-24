@@ -1,0 +1,347 @@
+---
+title: "Class Project Report"
+author: "Rees Klintworth"
+date: "November 19, 2014"
+output: word_document
+---
+### Introduction
+This R Markdown document is a culmination of the Class Project for Finance/Business Systems in the Raikes School Junior Curriculum. All relevant output will be shown in the main body of the report, and code can be viewed in Appendix B. The project tackles the financial problem of applying analysis techniques to a specific portfolio of stocks or options to determine the viability and status of the portfolio. The follwoing sections will apply analysis to both the individual stocks and the portfolio as a whole, providing more in-depth overviews of the meanings and usefulness of each measure.
+
+```{r, functions, echo=FALSE, comment=NA}
+## Library statements
+suppressMessages(library(forecast))
+suppressMessages(library(ggplot2))
+suppressMessages(library(lattice))
+suppressMessages(library(lubridate))
+suppressMessages(library(quadprog))
+suppressMessages(library(Quandl))
+suppressMessages(library(reshape2))
+suppressMessages(library(TTR))
+
+Quandl.auth("Xwpyys22sxHPzyXBrGdH")
+# The three stocks that I will analyze in this report
+my_stocks <- c("AIG", "AAPL", "BA", "PEP")
+# Other variables used throughout the project
+# Used for ERP calculations
+years_long <- 10
+# Used for stock-specific calculations
+years_short <- 3
+start_date_long <- as.Date(ymd(Sys.Date()) - years(years_long))
+start_date_short <- as.Date(ymd(Sys.Date()) - years(years_short))
+end_date <- Sys.Date()
+
+## All functions that will be used to create the output
+# Performs an analysis on the given timeseries of stock data
+analyze_timeseries <- function(ts, symbol)
+{
+  h_value = round(length(ts)/10)
+  
+  # Holt-Winters with both parameters true
+  beta_gamma_forecasts <- HoltWinters(ts)
+  beta_gamma_forecasts2 <- forecast.HoltWinters(beta_gamma_forecasts, h=h_value)
+  beta_gamma_box <- Box.test(beta_gamma_forecasts2$residuals, lag=h_value, type="Ljung-Box")
+
+  # Holt-Winters with both parameters false
+  neither_forecasts <- HoltWinters(ts, beta=FALSE, gamma=FALSE)
+  neither_forecasts2 <- forecast.HoltWinters(neither_forecasts, h=h_value)
+  neither_box <- Box.test(neither_forecasts2$residuals, lag=h_value, type="Ljung-Box")
+
+  # Holt-Winters with gamma false
+  beta_forecasts <- HoltWinters(ts, gamma=FALSE)
+  beta_forecasts2 <- forecast.HoltWinters(beta_forecasts, h=h_value)   
+  beta_box <- Box.test(beta_forecasts2$residuals, lag=h_value, type="Ljung-Box")
+  
+  # Checks for all forecasts where the p value is greater than the threshold (0.1)
+  forecasts <- c(beta_gamma_forecasts2, neither_forecasts2, beta_forecasts2)
+  p_values <- c(beta_gamma_box$p.value, neither_box$p.value, beta_box$p.value)
+  matching_models <- p_values >= 0.1
+  
+  matched = FALSE
+  
+ if (matching_models[1])
+   {
+    plot.forecast(beta_gamma_forecasts2, main="")
+    title(paste0(symbol, " Holt-Winters: Beta, Gamma"))
+    cat("Holt-Winters with Beta and Gamma fit well with a p-value of", p_values[1], "\n")
+    matched = TRUE
+   }
+ 
+ if (matching_models[2])
+   {
+    plot.forecast(neither_forecasts2, main="")
+    title(paste0(symbol, " Holt-Winters"))
+    cat("Holt-Winters without Beta or Gamma fit well with a p-value of", p_values[2], "\n")
+    matched = TRUE
+   }
+ 
+ if (matching_models[3])
+   {
+    plot.forecast(beta_forecasts2, main="")
+    title(paste0(symbol, " Holt-Winters: Beta"))
+    cat("Holt-Winters with Beta fit well with a p-value of", p_values[3], "\n")
+    matched = TRUE
+   }
+ 
+ if (!matched)
+   {
+    cat("No model fit the data well", "\n")
+   }
+}
+
+# Calculates two moving averages based on inputed day values.
+# Data must have an "Adjusted Close" column
+calculate_moving_averages <- function(data, days1, days2, symbol)
+{
+  # Find the first moving average
+  data_sma1 <- SMA(data$`Adjusted Close`, n = days1)
+  # Find the second moving average
+  data_sma2 <- SMA(data$`Adjusted Close`, n = days2)
+  # Approximate Frequency by finding average number of entries per year
+  number_per_year <- round(nrow(data)/years_short)
+  # Create a data frame from the three columns of data
+  data_frame <- data.frame(data$`Adjusted Close`, data_sma1, data_sma2)
+  # Create a time series from the data frame
+  time_series <- ts(data_frame, freq=number_per_year, start=c(year(start_date_short), month(start_date_short)))
+  colors <- c("Black", "Red", "Blue")
+  # Output the timeseries
+  ts.plot(time_series, col=colors, xlab="Year", ylab="Price (American Dollars)")
+  title(paste0(symbol, " Adjusted Close and Moving Averages"))
+  sma1_text <- paste0(days1, " Days")
+  sma2_text <- paste0(days2, " Days")
+  legend(x=2002, y=max(data$`Adjusted Close`), legend=c("Orignal", sma1_text, sma2_text), lwd=1, col = colors)
+}
+
+# Weights a single expected return
+calculate_weighted_return <- function(expected_return,weight)
+{
+  expected_return * weight
+}
+
+# Weights a full series of returns
+calculate_weighted_returns <- function(returns,weights)
+{
+  # Multiply weight by each element in column
+  weights * returns
+}
+
+# Returns weights for each stock. Naive implementation since there is no user input
+get_weights_naive <- function(stocks)
+{
+  # In shiny implementation, weights will be entered by user
+  percent_per_stock <- 1/length(my_stocks)
+  sapply(my_stocks, function(column)
+  {
+    percent_per_stock
+  })
+}
+
+# Find the expected return for a portofilio based on individual expected_returns and corresponding weights
+calculate_expected_return <- function(expected_returns, weights)
+{
+  sum(mapply(calculate_weighted_return, expected_returns,weights))
+}
+
+# Find the standard deviation for a weighted collection of return rates for each item in a portfolio
+calculate_standard_deviation <- function(weighted_rates)
+{
+  # Sum each row for single return rates per period
+  single_rates <- rowSums(weighted_rates)
+  #Calculate the standard deviation
+  sd(single_rates) 
+}
+
+# When called from below, creates a matrix of all possible combinations of weights for step size of .01
+calculate_weights_matrix <- function(stock_number, sum)
+{
+  if(stock_number == 1)
+  {
+    return(matrix(1-sum))
+  }
+  else
+  {
+    new_values <- seq(0,1-sum,.01)
+    previous <- lapply(new_values, function(thing){
+      matrix_continued <- calculate_weights_matrix(stock_number-1, sum+thing)
+      cbind(thing,matrix_continued)
+    })
+    do.call("rbind", previous)
+  }
+}
+
+# Returns the expected return and standard deviation for the specefied portfolio element weights
+calculate_plot_point <- function(weights)
+{
+  expected_return <- calculate_expected_return(expected_returns, weights)
+  
+  # Create dataframe of stock rates adjusted by weights
+  weighted_stock_rates <- as.data.frame(mapply(calculate_weighted_returns, stock_rates, weights))
+  # Calculate the standard deviation
+  standard_deviation <- calculate_standard_deviation(weighted_stock_rates)
+  c(expected_return, standard_deviation)
+}
+```
+
+### Fundamental and Timeseries Analysis
+Although it is important to analyze a portfolio as a whole, There is important information that can be gleaned from evaluating each individual stock or security. This analysis includes plotting the return rates as a Histogram, as well as providing a timeseries analysis and calculating simple moving averages. 
+
+Although the Histogram plot does not provide any crucial results to interpret, it does provide a good visualization of the return rates. For each of the stocks, the return rates adopt a roughly normalized pattern, centering around 0. Visual analysis of each plot also indicates that there are a larger number of values on the right side of 0.0, which indicates that the return is positive more often than it is negative. We cannot draw too many conclusions from this, however, because without knowing the specific return rates it can still be difficult to determine exactly what the outcome is.
+
+Applying timeseries analysis techniques to the data for each individual stock allows different models to be fit to the data. Although they are not foolproof, a model that fits well can be used to *carefully* interpret the data. It is crucial to remember that many factors affect changes in a stock's price, and even a model that fits well cannot account for sudden or unexpected changes in a specific stock or the market. Analysis of this caliber is meant as one tool in a financial analysis kit, and not as the final word.
+
+Using simple moving averages to predict the future pirce of a stock is a technique that some people use to determine the merits of a particular stock or security. Although provided here as an example of stock analysis, this technique has been shown to yield lower results than traditional buy-and-hold methods of stock trading in different research experiments. This result is consistent with both the Random Walk Hypothesis and the Efficient Market Hypothesis, which are each a different way of saying that future price performance cannot be accurately predicted based on analyzing past prices and trends. 
+```{r, fundamental_timeseries_analysis, echo=FALSE, comment=NA}
+## Calculate Market and Risk Free Values for other calculations
+# US stock market (S&P 500) values
+gspc_long <- Quandl("YAHOO/INDEX_GSPC", start_date=start_date_long, end_date=end_date)
+# Risk-free rate of return values
+tnx <- Quandl("YAHOO/INDEX_TNX", start_date=start_date_long, end_date=end_date)
+# Reverse the data to get the normal form
+gspc_long <- gspc_long[nrow(gspc_long):1,]
+tnx <- tnx[nrow(tnx):1,]
+
+# Calculate the rates of return for gspc
+gspc_long_rates <- diff(gspc_long$'Adjusted Close')/gspc_long$'Adjusted Close'[-length(gspc_long$'Adjusted Close')]
+# Find the Average rate for each, and then annualize it
+gspc_long_rate <- mean(gspc_long_rates)
+gspc_long_rate <- (1 + gspc_long_rate)^(length(gspc_long_rates)/years_long) - 1
+# TNX data is already annualized, just need to find the average
+tnx_rate <- mean(tnx$'Adjusted Close'/100)
+# Calculate the equity risk premium
+erp <- gspc_long_rate - tnx_rate
+
+gspc_short <- Quandl("YAHOO/INDEX_GSPC", start_date=start_date_short, end_date=end_date)
+gspc_short <- gspc_short[nrow(gspc_short):1,]
+# Calculate the rates of return for the S&P 500
+gspc_short_rates <- diff(gspc_short$'Adjusted Close')/gspc_short$'Adjusted Close'[-length(gspc_short$'Adjusted Close')]
+
+stock_rates <- as.data.frame(sapply(my_stocks, function(symbol)
+{
+  cat("Analyzing ", symbol, ":", "\n", sep="")
+  quandl_code <- paste0("YAHOO/", symbol)
+  stock <- Quandl(quandl_code, start_date=start_date_short, end_date=end_date)
+  # Reverse the data so it isn't backwards
+  stock <- stock[nrow(stock):1,]
+  # Determine frequency
+  number_per_year <- round(nrow(stock)/years_short)
+  # Calculate the rates of return for the symbol
+  stock_ts <- ts(stock[,'Adjusted Close'], freq=number_per_year, start=c(year(start_date_short), month(start_date_short)))
+  analyze_timeseries(stock_ts, symbol)
+  calculate_moving_averages(stock, 50, 200, symbol)
+  rates <- diff(stock$'Adjusted Close')/stock$'Adjusted Close'[-length(stock$'Adjusted Close')]
+  hist(rates, breaks=20, main=paste("Return Rates for",symbol))
+  rates
+}))
+
+colnames(stock_rates) <- my_stocks
+```
+
+### Financial Analysis
+Now that we have looked at some modeling and general data analysis techniques, it is time to apply finance-specific analysis to the stock and the portfolio. First, there are some calculations that need to be made for each stock. 
+
+Beta is an approximation of the tendencies of a specifc stock or security relative to the overall market performance. Beta equal to 1 indicates that when the market goes up or down by 1%, the stock will also go up or down by 1%. Beta less than 1 indicates that a stock will generally go up or down *less* than the market, and Beta greater than 1 indiciates that generally a stock will go up or down *more* than the market.
+
+The expected return rate is calculated by applying the CAPM (Capital Asset Pricing Model) to the stock or security. This is calculated by starting with the risk-free rate of return, and adding to that the equity risk premium (defined above), multiplied by the beta for the specified stock. This provides an approximation for the return rate without applying modelling/forecasting.
+
+The standard deviation for an individual stock or security measures the overall volatility of the equity. This measure can be used to approximate the risk of an equity. High risk equities may return higher yields, but may also lead to greater losses.
+```{r, financial_analysis_one, echo=FALSE, comment=NA}
+## Deliverable 2
+# Calculate the expected return for each stock
+expected_returns <-  lapply(my_stocks, function(stock)
+{
+  cat("Analyzing ", stock, ":", "\n", sep="")  
+  # Create a linear model to find the line of best fit
+  res <- lm(stock_rates[,stock]~gspc_short_rates)
+  # Beta is the slope of the Linear model
+  beta <- res$coefficients[[2]]
+  cat("Beta:", beta, "\n")
+  # Find the expected return using the formula from the CAPM model
+  expected_return <- tnx_rate + beta*erp
+  cat("Expected Return:", sprintf("%1.2f%%", 100*expected_return), "\n")
+  # Find the standard deviation
+  standard_deviation <- sd(stock_rates[,stock])
+  cat("Standard Deviation:", sprintf("%1.3f", standard_deviation), "\n\n")
+  expected_return
+})
+```
+Individual equity analysis is an important component of building a strong portfolio, but it is also cruical to analyze the portfolio as a whole.
+
+The expected return for a portfolio can be calculated easily. It will simply be a weighted combination of the return rates for each stock within the portfolio. This takes into account the fact that a portfolio will not (usually), be made up of a single stock or security, and adjusts accordingly. The expected return can be affected by changing the weights associated with each stock. In this static analysis, it is assumed that all weights will be equal, but a later section will address the optimization of a portfolio for a desired return rate, which will calculate the most appropriate weights.
+
+The standard deviation, however, is not simply a weighted combination of the individual standard deviation values. Equity combinations within a portfolio can allow for the minimization of risk. It is desirable to combine stocks or securities with low correlation. This helps diversify a portfolio, because when one stock goes up or down, the others will not necessarily perform the same way. This minimizes risk because a downturn in one stock does not necessarily dictate the performance of the portfolio as a whole.
+```{r, financial_analysis_two, echo=FALSE, comment=NA}
+cor_matrix <- cor(stock_rates)
+cat("Correlation Matrix")
+print(cor_matrix)
+
+# Need to adjust the data format to be able to plot it
+print_cor <- melt(cor_matrix)
+
+# Plot the correlation on a barchart using lattice
+barchart(value ~ Var1 | Var2, data = print_cor, layout=c(length(my_stocks),1), main="Porfolio Correlations",scales=list(x=list(rot=90)))
+
+## Deliverable 3
+weights <- get_weights_naive(my_stocks)
+
+# Calculate the combined expected return
+expected_return <- calculate_expected_return(expected_returns,weights)
+
+# Create dataframe of stock rates adjusted by weights
+weighted_stock_rates <- as.data.frame(mapply(calculate_weighted_returns, stock_rates, weights))
+
+#Calculate the standard deviation
+standard_deviation <- calculate_standard_deviation(weighted_stock_rates)
+
+cat("The expected return for the portfolio is", sprintf("%1.2f%%", 100*expected_return), "\n")
+cat("The standard deviation for the portfolio is", sprintf("%1.3f", standard_deviation), "\n")
+```
+### Portfolio Optimization
+
+After taking a look at a static portfolio and the resulting calculations, it is also possible to build an optimal portfolio for a given set of stocks. This optimal portfolio is created using a target return rate. The optimal weighting of the selected stocks will be calculated to reach this return rate while minimizing the standard deviation, or risk, associated with the combination of equities. For this example, a target return rate of 7.5% was chosen to demonstrate functionality. 
+```{r, portfolio_optimization, echo=FALSE, comment=NA}
+# Variables needed to solve for weights
+cov_matrix <- cov(stock_rates)
+risk <- rep(0,length(my_stocks))
+amat <- matrix(c(rep(1, nrow(cov_matrix)), unlist(expected_returns)), nrow=nrow(cov_matrix))
+# Picking desired return rate of .075, or 7.5% to demonstrate functionality
+bvec <- c(1, .075)
+meq <- 2
+
+# From quadprog package. Calculates the weights needed to reach a specified mean rate of return while minimizing standard deviation
+calculated_weights <- solve.QP(cov_matrix, risk, amat, bvec, meq, factorized=FALSE)$solution
+names(calculated_weights) <- my_stocks
+# Calculates the mean rate of return and the standard deviation for the weighted combination
+output <- calculate_plot_point(calculated_weights)
+
+cat("For a return rate of ", sprintf("%1.2f%%", 100*output[1]), " the standard deviation can be minimized to ", sprintf("%1.3f", output[2]), " with the following weights:", "\n", sep="")
+invisible(sapply(my_stocks, function(symbol)
+{
+  cat(symbol,": ", sprintf("%1.2f%%", 100*calculated_weights[symbol]), "\n", sep="")
+}))
+
+# Builds a data frame that contains all combinations of three weights for step size = .01
+plot_weights <- calculate_weights_matrix(length(my_stocks), 0)
+
+# For each weight combination, calculate the mean return rate and standard deviation to plot
+points <- as.data.frame(t(apply(plot_weights,1,calculate_plot_point)))
+
+# Plot the points, putting standard deviation on the x-axis and mean rate of return on the y-axis
+qplot(points, x=points[,2], y=points[,1], xlab="Standard Deviation", ylab="Mean Rate of Return", main="Portfolio Combinations Plot")
+```
+
+### Final Analysis
+
+### Conclusion
+Finance is an art of calculation. As many have said, the devil is in the details. Different calculations can have different values based on what specific rates or time periods were used to perform the calculation. There is also no single, foolproof method for analyzing the merits of a portfolio. Therefore, a strong portfolio analysis will combine multiple evaluation techniques, allowing the user to look at all of the data and results to make an informed decision. It is important to remember that the stock market is a volatile and ever-changing entity. This report has aggregated some of the most popular techniques, analyzing a sample portfolio to demonstrate the techniques and related inferences used by professionals to make financial decisions.
+
+All financial data was retrieved through the Quandl financial portal, and comes from Yahoo Finance. The Beta for each stock is calculated by comparing the price change of the stock to the price change of the S&P 500 market over the same time period. I chose 3 years for the time period length, because this is a common value used for Beta (Yahoo Finance calculates Beta using 3 years worth of data). 3 years provides a good balance of plenty of data, while looking at a time period that is short enough to remain relevant to current calculations. 
+
+The Equity Risk Premium, which is the additional return of the overall stock market above the risk free rate, was calculated using data over the past 10 years. The average annualized rate of return for the S&P 500 was calculated, as was the average risk-free rate of return. The risk-free rate was then subtracted from the market return rate to find the ERP.
+```{r, appendix_a_chunk, echo=FALSE, comment=NA}
+cat("GSPC data:", "\n")
+head(gspc_long)
+str(gspc_long)
+cat("TNX data:", "\n")
+head(tnx)
+str(tnx)
+```
+The code below was taken from an R Markdown document, and was the basis of this report. The document was initially generated via Knitr, but additional text was added and pieces were moved around as necessary.
